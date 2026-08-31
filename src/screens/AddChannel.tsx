@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { ApiError, channelsApi, type TestConnectionResult } from "../lib/api";
 import { useApp } from "../store/AppStore";
 import { VAR } from "../lib/tokens";
 
@@ -11,12 +12,28 @@ interface AddChannelProps {
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-const STEPS = ["Identity", "Targeting", "Scheduling", "YouTube", "AI Settings", "Warm-up"];
+const STEPS = [
+  "Identity",
+  "Credentials",
+  "Targeting",
+  "Scheduling",
+  "YouTube",
+  "AI Settings",
+  "Warm-up",
+];
 
 interface FormState {
   name: string;
   handle: string;
   isActive: boolean;
+  /**
+   * Kunci Zernio. HANYA-TULIS: server tidak pernah mengembalikannya, jadi saat
+   * mengedit channel field ini selalu mulai kosong. Kosong berarti "jangan
+   * ubah", bukan "hapus" — kalau tidak, setiap penyimpanan form biasa akan
+   * menghapus kredensial yang tidak ditampilkan.
+   */
+  zernioApiKey: string;
+  zernioAccountId: string;
   market: string;
   contentLang: string;
   niche: string;
@@ -87,11 +104,168 @@ function inputStyle(error?: string) {
   };
 }
 
-function ConnectedChip({ label }: { label: string }) {
+function ConnectedChip({ label, connected }: { label: string; connected: boolean }) {
   return (
-    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-surface-2 text-xs text-success">
-      <span className="status-dot active" />
+    <div
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-surface-2 text-xs ${
+        connected ? "text-success" : "text-text-muted"
+      }`}
+    >
+      <span className={`status-dot ${connected ? "active" : "draft"}`} />
       {label}
+    </div>
+  );
+}
+
+/**
+ * Kredensial Zernio + uji koneksi sungguhan (PRD §7.3, F1).
+ *
+ * Dua hal yang membuat langkah ini ada:
+ *  - Tanpa field ini, channel yang BERFUNGSI tidak bisa dibuat lewat UI sama
+ *    sekali. Prototipe hanya memasang chip "Zernio · Connected" statis, yang
+ *    bukan sekadar tidak berguna — ia berbohong.
+ *  - `accountId` DIPILIH dari hasil uji, bukan diketik. Ia adalah id internal
+ *    Zernio sepanjang 24 hex; mengetiknya manual hampir pasti salah, dan
+ *    salahnya baru ketahuan saat post gagal terbit berjam-jam kemudian.
+ */
+function CredentialsStep({
+  channelId,
+  apiKey,
+  accountId,
+  hasStoredKey,
+  onApiKey,
+  onAccountId,
+}: {
+  channelId: string | null;
+  apiKey: string;
+  accountId: string;
+  hasStoredKey: boolean;
+  onApiKey: (v: string) => void;
+  onAccountId: (v: string) => void;
+}) {
+  const [state, setState] = useState<
+    | { kind: "idle" }
+    | { kind: "busy" }
+    | { kind: "ok"; accounts: NonNullable<TestConnectionResult["youtube"]>; total: number }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  const canTest = apiKey.trim().length > 0 || (hasStoredKey && Boolean(channelId));
+
+  async function test() {
+    setState({ kind: "busy" });
+    try {
+      // Channel baru belum punya id, jadi kunci dikirim di body. Itu justru
+      // intinya: operator harus bisa membuktikan kuncinya benar SEBELUM
+      // menyimpannya, bukan sesudah.
+      const res = await channelsApi.testConnection(channelId ?? "new", apiKey.trim() || undefined);
+      if (!res.ok) {
+        setState({ kind: "error", message: res.error ?? "Koneksi ditolak." });
+        return;
+      }
+      const accounts = res.youtube ?? [];
+      setState({ kind: "ok", accounts, total: res.total ?? accounts.length });
+      // Kalau hanya ada satu channel YouTube, pilihkan — tidak ada yang perlu
+      // diputuskan operator di situ.
+      if (accounts.length === 1 && accounts[0]) onAccountId(accounts[0].accountId);
+    } catch (err) {
+      setState({
+        kind: "error",
+        message: err instanceof ApiError ? err.message : "Gagal menghubungi server.",
+      });
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <SectionHeader
+        title="Kredensial Zernio"
+        subtitle="Kunci API dan channel YouTube yang akan dipublish"
+      />
+
+      <Field
+        label="Zernio API Key"
+        hint={
+          hasStoredKey
+            ? "Sudah tersimpan dan terenkripsi. Kosongkan untuk mempertahankannya; isi hanya bila ingin mengganti."
+            : "Diambil dari dashboard Zernio. Disimpan terenkripsi (AES-GCM), tidak pernah ditampilkan kembali."
+        }
+      >
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(e) => onApiKey(e.target.value)}
+          placeholder={hasStoredKey ? "•••••••• (tersimpan)" : "sk_…"}
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full px-3 py-2 rounded-md border text-sm outline-none transition-fast font-mono"
+          style={inputStyle()}
+        />
+      </Field>
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={test}
+          disabled={!canTest || state.kind === "busy"}
+          className="px-4 py-2 text-sm rounded-md border border-border text-text-primary transition-fast hover:bg-overlay disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          {state.kind === "busy" ? "Menguji…" : "Test connection"}
+        </button>
+        {state.kind === "ok" && (
+          <span className="text-xs text-success">
+            Terhubung — {state.total} akun, {state.accounts.length} di antaranya YouTube.
+          </span>
+        )}
+        {state.kind === "error" && (
+          <span role="alert" className="text-xs text-danger-text">
+            {state.message}
+          </span>
+        )}
+      </div>
+
+      {state.kind === "ok" && state.accounts.length > 0 && (
+        <Field
+          label="Channel YouTube"
+          hint="Post akan diterbitkan ke channel yang dipilih di sini."
+        >
+          <div className="space-y-2">
+            {state.accounts.map((a) => (
+              <button
+                key={a.accountId}
+                onClick={() => onAccountId(a.accountId)}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-md border text-left transition-fast ${
+                  accountId === a.accountId
+                    ? "border-accent bg-accent/10"
+                    : "border-border bg-surface-2 hover:bg-overlay"
+                }`}
+              >
+                <div className="min-w-0">
+                  <div className="text-sm text-text-primary truncate">{a.displayName}</div>
+                  <div className="text-xs text-text-muted truncate">
+                    @{a.username} · {a.isActive ? "aktif" : "tidak aktif"}
+                  </div>
+                </div>
+                {accountId === a.accountId && (
+                  <span className="text-xs text-accent flex-shrink-0 ml-3">terpilih</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
+
+      {state.kind === "ok" && state.accounts.length === 0 && (
+        <div className="text-xs text-warning">
+          Kunci ini sah, tapi tidak ada channel YouTube yang terhubung padanya. Hubungkan dulu di
+          dashboard Zernio.
+        </div>
+      )}
+
+      {accountId && state.kind !== "ok" && (
+        <div className="text-xs text-text-muted">
+          Account ID tersimpan: <span className="font-mono">{accountId}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -147,6 +321,9 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
           name: editing.name,
           handle: editing.handle,
           isActive: editing.status === "active",
+          // Selalu kosong saat mengedit: server tidak pernah mengirim kunci balik.
+          zernioApiKey: "",
+          zernioAccountId: (editing as { zernioAccountId?: string }).zernioAccountId ?? "",
           market: editing.market,
           contentLang: editing.contentLang,
           niche: editing.niche,
@@ -175,6 +352,8 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
           name: "",
           handle: "",
           isActive: true,
+          zernioApiKey: "",
+          zernioAccountId: "",
           market: "Indonesia",
           contentLang: "id",
           niche: "Technology",
@@ -298,6 +477,10 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
       warmupEnabled: form.warmupEnabled,
       warmupDays: form.warmupDays,
       warmupStartPerDay: form.warmupStartPerDay,
+      zernioAccountId: form.zernioAccountId,
+      // Hanya dikirim bila benar-benar diisi. Kunci kosong berarti "pertahankan
+      // yang tersimpan", bukan "hapus" — server memperlakukannya begitu.
+      ...(form.zernioApiKey.trim() ? { zernioApiKey: form.zernioApiKey.trim() } : {}),
     };
 
     if (editing) {
@@ -414,8 +597,20 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
             </div>
           )}
 
-          {/* Step 1 — Targeting */}
+          {/* Step 1 — Credentials */}
           {currentStep === 1 && (
+            <CredentialsStep
+              channelId={editing?.id ?? null}
+              apiKey={form.zernioApiKey}
+              accountId={form.zernioAccountId}
+              hasStoredKey={Boolean((editing as { hasZernioKey?: boolean } | undefined)?.hasZernioKey)}
+              onApiKey={(v) => set("zernioApiKey", v)}
+              onAccountId={(v) => set("zernioAccountId", v)}
+            />
+          )}
+
+          {/* Step 2 — Targeting */}
+          {currentStep === 2 && (
             <div className="space-y-5">
               <SectionHeader
                 title="Targeting & Content"
@@ -477,8 +672,8 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
             </div>
           )}
 
-          {/* Step 2 — Scheduling */}
-          {currentStep === 2 && (
+          {/* Step 3 — Scheduling */}
+          {currentStep === 3 && (
             <div className="space-y-5">
               <SectionHeader
                 title="Scheduling Defaults"
@@ -581,19 +776,31 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
                 </div>
               </Field>
 
+              {/*
+                Chip ini dulu selalu berbunyi "Connected" untuk ketiganya,
+                tanpa memeriksa apa pun. Sekarang ia membaca keadaan
+                sebenarnya: Zernio terhubung hanya bila kunci DAN channel
+                sudah dipilih di langkah Credentials.
+              */}
               <div>
                 <div className="label-caps mb-3">Connected Services</div>
                 <div className="flex gap-2 flex-wrap">
-                  <ConnectedChip label="YouTube · Connected" />
-                  <ConnectedChip label="Storage (R2) · Connected" />
-                  <ConnectedChip label="Zernio · Connected" />
+                  <ConnectedChip
+                    label={
+                      form.zernioAccountId
+                        ? "Zernio · Channel terpilih"
+                        : "Zernio · Belum dikonfigurasi"
+                    }
+                    connected={Boolean(form.zernioAccountId)}
+                  />
+                  <ConnectedChip label="Storage (R2) · Terhubung" connected />
                 </div>
               </div>
             </div>
           )}
 
-          {/* Step 3 — YouTube Defaults */}
-          {currentStep === 3 && (
+          {/* Step 4 — YouTube Defaults */}
+          {currentStep === 4 && (
             <div className="space-y-5">
               <SectionHeader
                 title="YouTube Defaults"
@@ -660,8 +867,8 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
             </div>
           )}
 
-          {/* Step 4 — AI Settings */}
-          {currentStep === 4 && (
+          {/* Step 5 — AI Settings */}
+          {currentStep === 5 && (
             <div className="space-y-5">
               <SectionHeader
                 title="AI Settings"
@@ -723,8 +930,8 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
             </div>
           )}
 
-          {/* Step 5 — Warm-up */}
-          {currentStep === 5 && (
+          {/* Step 6 — Warm-up */}
+          {currentStep === 6 && (
             <div className="space-y-5">
               <SectionHeader
                 title="Warm-up (optional)"

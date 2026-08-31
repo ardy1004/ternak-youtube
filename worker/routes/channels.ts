@@ -230,6 +230,11 @@ channelRoutes.post("/:id/test-connection", async (c) => {
 
   let apiKey = body.zernioApiKey?.trim();
   if (!apiKey) {
+    // `new` = form channel yang belum disimpan. Tanpa kunci di body, tidak ada
+    // apa pun yang bisa diuji — katakan itu, jangan cari baris yang tidak ada.
+    if (id === "new") {
+      return c.json({ ok: false, error: "Masukkan API key dulu untuk mengujinya." }, 400);
+    }
     const [row] = await db.select().from(channels).where(eq(channels.id, id)).limit(1);
     if (!row?.zernioApiKeyEnc) {
       return c.json({ ok: false, error: "Belum ada API key Zernio untuk channel ini." }, 400);
