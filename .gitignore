@@ -1,0 +1,42 @@
+node_modules/
+dist/
+build/
+.cache/
+.env*
+.vite/
+
+# Spike — throwaway probes against live Zernio/R2, run once before the Workers
+# build to settle PRD §12. Never committed: the outputs carry presigned URLs and
+# account ids, and this repo is public. Delete the folder once answered.
+/spike/
+
+# Test media for the spike. Never source, never committed.
+/test.mp4
+*.mp4
+*.mov
+*.mkv
+vite.config.*.timestamp-*
+*.tsbuildinfo
+*-debug.log*
+logs/
+*.log
+.claude-replay.*
+.tmp-*
+
+# Platform-managed agentplat state, not project source. In the
+# client-initiated single-repo workspace layout (make's `Path: "."` spec) the
+# repo root IS the workspace root, so these land inside this repo rather than
+# beside it.
+/.plugins/
+/.opencode-skills/
+
+# Cloudflare Wrangler local state
+.wrangler/
+
+# Secret Worker untuk dev lokal. Padanan produksinya diset lewat
+# `wrangler secret put`, tidak pernah dari file.
+.dev.vars*
+
+# PRD tidak disertakan ke repo publik — keputusan operator.
+/PRD-Ternak-Youtube.md
+/src/imports/

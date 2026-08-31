@@ -1,0 +1,9 @@
+# pnpm 11 memindahkan setelan ini keluar dari package.json, dan menamainya
+# `allowBuilds` (bukan `onlyBuiltDependencies` seperti versi sebelumnya).
+#
+# workerd adalah runtime Workers yang dipakai `wrangler dev` — build script-nya
+# yang menempatkan binary sesuai platform, jadi tidak boleh dilewati. esbuild
+# ikut karena dipakai wrangler dan drizzle-kit untuk bundling.
+allowBuilds:
+  esbuild: true
+  workerd: true

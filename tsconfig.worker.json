@@ -1,0 +1,23 @@
+{
+  // Worker dan aplikasi React punya lingkungan tipe yang saling bertabrakan:
+  // Worker tidak punya DOM, aplikasi tidak punya D1Database. Memaksa keduanya
+  // ke satu tsconfig membuat salah satunya berbohong — jadi dipisah.
+  //
+  // Tipe runtime Workers datang dari worker-configuration.d.ts yang dihasilkan
+  // `wrangler types`; jalankan ulang setiap kali wrangler.jsonc berubah.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "include": ["worker/**/*.ts", "worker-configuration.d.ts"]
+}

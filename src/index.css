@@ -1,0 +1,167 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+@import 'tailwindcss';
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/*
+ * Plain `@theme`, not `@theme inline`. With `inline` Tailwind bakes the literal
+ * value into every utility (`.bg-surface-1{background-color:#151517}`), so
+ * redefining a token later changes nothing. Without it, utilities compile to
+ * `var(--color-surface-1)` and a light palette becomes one override block.
+ */
+@theme {
+  --color-bg-0: #0E0E10;
+  --color-surface-1: #151517;
+  --color-surface-2: #1D1D20;
+  --color-surface-3: #252528;
+  --color-border: #2A2A2E;
+  --color-border-subtle: #222225;
+  --color-border-hover: #3A3A3E;
+  --color-text-primary: #EDEDEF;
+  --color-text-secondary: #A1A1A6;
+  --color-text-muted: #6E6E73;
+  --color-accent: #AAFF47;
+  --color-accent-dim: #7ACC2A;
+  --color-success: #3DCC7A;
+  --color-warning: #F5A623;
+  --color-danger: #FF4444;
+  --color-danger-text: #FF6666;
+  --color-danger-subtle: #FF9999;
+
+  /* Extra calendar hues — only ever used to tell channels apart. */
+  --color-channel-4: #5A9BFF;
+  --color-channel-5: #C77DFF;
+
+  /*
+   * Hover/press overlays. Tokenised because a light palette has to darken
+   * rather than lighten — a hardcoded white wash is invisible on a pale
+   * surface. `bg-black/40` scrims behind modals stay literal: a dim backdrop
+   * is correct in either theme.
+   */
+  --color-overlay: rgba(255, 255, 255, 0.05);
+  --color-overlay-subtle: rgba(255, 255, 255, 0.02);
+
+  /* PRD §8.2 type scale: 12 / 13 / 14 / 16 / 20 / 28 / 40 */
+  --text-metric: 28px;
+  --text-stat: 40px;
+
+  --font-ui: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-ui);
+  background-color: var(--color-bg-0);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Scrollbar styles */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 2px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-hover);
+}
+
+/*
+ * Keyboard focus. Controls set `outline-none` for the resting state, so the
+ * visible ring has to come back here or the app is unusable without a mouse.
+ */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Status dots */
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.scheduled { background: var(--color-text-secondary); }
+.status-dot.published { background: var(--color-success); }
+.status-dot.failed { background: var(--color-danger); }
+.status-dot.queued { background: var(--color-warning); }
+.status-dot.cancelled { background: var(--color-text-muted); }
+.status-dot.active { background: var(--color-success); }
+.status-dot.paused { background: var(--color-warning); }
+.status-dot.draft { background: var(--color-text-muted); }
+
+/* Skeleton animation */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+
+.skeleton {
+  background: var(--color-surface-2);
+  border-radius: 4px;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+/* Transitions */
+.transition-fast {
+  transition: all 150ms ease-out;
+}
+
+/* Uppercase label style */
+.label-caps {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* PRD §8.2 and §11 — motion is a preference, not a decoration. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .skeleton {
+    animation: none;
+    opacity: 0.55;
+  }
+}

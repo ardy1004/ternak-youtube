@@ -1,0 +1,92 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ternak-youtube",
+  "main": "./worker/index.ts",
+  // Dipatok ke tanggal build workerd yang terpasang (1.20260828.1). Tanggal
+  // yang lebih baru dari runtime lokal ditolak `wrangler dev` — naikkan ini
+  // bersamaan dengan menaikkan wrangler, jangan sendiri-sendiri.
+  "compatibility_date": "2026-08-28",
+  // nodejs_compat memberi akses ke node:crypto dsb. Web Crypto sudah cukup
+  // untuk PBKDF2/AES-GCM/HMAC, tapi drizzle dan beberapa util mengharapkannya.
+  "compatibility_flags": ["nodejs_compat"],
+
+  // SPA + API dalam satu Worker.
+  //
+  // Aset dilayani lebih dulu bila ada yang cocok; `run_worker_first`
+  // mengecualikan /api/* supaya selalu masuk ke skrip Worker.
+  // `single-page-application` membuat reload di rute dalam (mis. /schedule)
+  // mengembalikan index.html, bukan 404.
+  "assets": {
+    "directory": "./dist/",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ternak-youtube",
+      "database_id": "ae9250d6-eac2-4eb4-a2cc-39fd1c035df6",
+      "migrations_dir": "./worker/db/migrations"
+    }
+  ],
+
+  // Bucket PRIVAT — tidak ada public access, tidak ada custom domain.
+  // Spike §12 membuktikan Zernio menarik media saat publish-time, jadi R2
+  // tidak pernah jadi sumber yang ditarik pihak luar: Worker menyalin bytes
+  // ke storage Zernio lewat presigned upload milik mereka.
+  // Lokal saat `wrangler dev`, nyata saat deploy — dan itu cukup, karena
+  // upload memakai multipart lewat binding ini, bukan URL presigned yang
+  // menunjuk ke luar. Satu jalur kode untuk dev dan produksi.
+  "r2_buckets": [
+    {
+      "binding": "VIDEOS",
+      "bucket_name": "ternak-youtube"
+    }
+  ],
+
+  // Sesi login (PRD §10 — password + session).
+  "kv_namespaces": [
+    {
+      "binding": "SESSIONS",
+      "id": "772ed3a807e14ca9b5dd090770fd293b"
+    }
+  ],
+
+  // Penyalinan video R2 -> Zernio hidup di sini: consumer punya wall time 15
+  // menit, sedangkan cron dengan interval <1 jam hanya dapat 30 detik CPU.
+  "queues": {
+    "producers": [
+      {
+        "binding": "DISPATCH",
+        "queue": "ternak-youtube-dispatch"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "ternak-youtube-dispatch",
+        // Satu per satu: tiap pesan menyalurkan satu video utuh. Membatch
+        // beberapa video dalam satu invocation memperbesar peluang kena
+        // batas wall time secara bersamaan.
+        "max_batch_size": 1,
+        "max_retries": 3,
+        "dead_letter_queue": "ternak-youtube-dispatch-dlq"
+      }
+    ]
+  },
+
+  "triggers": {
+    "crons": [
+      // 18:00 UTC = 01:00 WIB — jauh sebelum jam tayang paling pagi, supaya
+      // setiap slot sudah antre saat jamnya tiba.
+      "0 18 * * *",
+      // Jaring pengaman: memungut baris yang tersangkut lewat jadwalnya.
+      "*/10 * * * *"
+    ]
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}
