@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useApp } from "../store/AppStore";
 import { ApiError, authApi } from "../lib/api";
+import { useAuth } from "../auth/AuthGate";
 
 function Section({
   title,
@@ -163,6 +164,13 @@ function ChangePassword() {
 
 export default function Settings() {
   const { dryRun, setDryRun, settings, updateSettings, resetDemoData, channels, videos } = useApp();
+  const readyChannels = channels.filter(
+    (c) =>
+      c.status === "active" &&
+      (c as { hasZernioKey?: boolean }).hasZernioKey &&
+      (c as { zernioAccountId?: string }).zernioAccountId,
+  ).length;
+  const { user } = useAuth();
   const [confirmReset, setConfirmReset] = useState(false);
 
   return (
@@ -175,12 +183,16 @@ export default function Settings() {
           </div>
         </div>
 
-        <Section title="Operator" subtitle="Single-operator console — no other accounts exist">
-          <Row label="Signed in as">
-            <span className="font-mono text-sm text-text-secondary">operator</span>
+        <Section title="Operator" subtitle="Konsol satu operator — tidak ada akun lain">
+          <Row label="Masuk sebagai">
+            {/* Dulu dipatok string "operator". Sekarang username sungguhan. */}
+            <span className="font-mono text-sm text-text-secondary">{user.username}</span>
           </Row>
-          <Row label="Session" hint="Handled by the platform access layer in front of the app">
-            <StatusChip label="Authenticated" />
+          <Row
+            label="Sesi"
+            hint="Cookie HttpOnly bertanda-tangan, disimpan di KV, berlaku 14 hari. Logout mencabutnya seketika."
+          >
+            <StatusChip label="Terautentikasi" />
           </Row>
         </Section>
 
@@ -248,8 +260,17 @@ export default function Settings() {
         </Section>
 
         <Section title="Notifications" subtitle="Which events reach you outside the console">
-          <Row label="Delivery channel" hint="Configured on the platform side, not stored here">
-            <StatusChip label="Telegram · Connected" />
+          {/*
+            Chip ini dulu berbunyi "Telegram · Connected". Tidak ada pengiriman
+            notifikasi yang dibangun sama sekali (PRD Phase 2), jadi itu klaim
+            palsu tentang mekanisme yang tidak ada — dan justru berbahaya:
+            operator akan mengira sudah akan diberi tahu saat post gagal.
+          */}
+          <Row
+            label="Delivery channel"
+            hint="Belum dibangun. Preferensi di bawah tersimpan dan akan dipakai begitu pengiriman notifikasi ada (PRD Phase 2)."
+          >
+            <StatusChip label="Belum dikonfigurasi" tone="muted" />
           </Row>
           <Row label="Post failed" hint="Recommended — failures are the whole reason to look">
             <Toggle
@@ -279,10 +300,17 @@ export default function Settings() {
           subtitle="Read-only status — credentials live in platform secrets"
         >
           <div className="flex flex-wrap gap-2">
-            <StatusChip label="YouTube · Connected" />
-            <StatusChip label="Zernio · Connected" />
-            <StatusChip label="Storage (R2) · Connected" />
-            <StatusChip label="Cloudflare Images · Not configured" tone="muted" />
+            {/* Dihitung dari channel yang benar-benar ada, bukan dipatok. */}
+            <StatusChip
+              label={
+                channels.length === 0
+                  ? "Zernio · Belum ada channel"
+                  : `Zernio · ${readyChannels}/${channels.length} channel siap`
+              }
+              tone={readyChannels > 0 ? "success" : "muted"}
+            />
+            <StatusChip label="Storage (R2) · Terhubung" />
+            <StatusChip label="Cloudflare Images · Belum dikonfigurasi" tone="muted" />
           </div>
           <div className="text-xs text-text-muted">
             Thumbnail transformation is still an open decision (PRD §12), so Images is unwired.

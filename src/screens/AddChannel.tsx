@@ -424,16 +424,28 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
     return e;
   }, [form]);
 
-  const STEP_FIELDS: string[][] = [
-    ["name", "handle"],
-    [],
-    ["videosPerDay", "maxUploadsPerDay", "windowEnd", "intervalMin", "activeDays"],
-    [],
-    [],
-    ["warmupStartPerDay"],
-  ];
+  /**
+   * Field mana yang divalidasi di tiap langkah. Panjangnya HARUS sama dengan
+   * STEPS — header stepper melakukan loop atas seluruh STEPS dan mengindeks
+   * array ini, jadi satu entri yang kurang membuat seluruh layar blank, bukan
+   * sekadar satu langkah rusak.
+   *
+   * Dikunci ke nama langkah, bukan urutan posisi, supaya menyisipkan langkah
+   * baru di tengah tidak diam-diam menggeser validasi ke langkah yang salah —
+   * yang persis terjadi saat langkah "Credentials" ditambahkan.
+   */
+  const FIELDS_BY_STEP: Record<string, string[]> = {
+    Identity: ["name", "handle"],
+    Credentials: [],
+    Targeting: [],
+    Scheduling: ["videosPerDay", "maxUploadsPerDay", "windowEnd", "intervalMin", "activeDays"],
+    YouTube: [],
+    "AI Settings": [],
+    "Warm-up": ["warmupStartPerDay"],
+  };
+  const STEP_FIELDS: string[][] = STEPS.map((s) => FIELDS_BY_STEP[s] ?? []);
 
-  const stepErrors = STEP_FIELDS[currentStep].filter((f) => errors[f]);
+  const stepErrors = (STEP_FIELDS[currentStep] ?? []).filter((f) => errors[f]);
   const stepValid = stepErrors.length === 0;
   const formValid = Object.keys(errors).length === 0;
 
@@ -492,7 +504,7 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
   };
 
   const goNext = () => {
-    STEP_FIELDS[currentStep].forEach(markTouched);
+    (STEP_FIELDS[currentStep] ?? []).forEach(markTouched);
     if (stepValid) setCurrentStep(currentStep + 1);
   };
 
@@ -518,7 +530,7 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
         {/* Step indicator */}
         <div className="flex items-center gap-0 mb-8 flex-wrap">
           {STEPS.map((step, i) => {
-            const hasError = STEP_FIELDS[i].some((f) => errors[f] && touched[f]);
+            const hasError = (STEP_FIELDS[i] ?? []).some((f) => errors[f] && touched[f]);
             const current = i === currentStep;
             const done = i < currentStep;
 
@@ -1012,7 +1024,7 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
             ) : (
               <button
                 onClick={goNext}
-                disabled={!stepValid && STEP_FIELDS[currentStep].every((f) => touched[f])}
+                disabled={!stepValid && (STEP_FIELDS[currentStep] ?? []).every((f) => touched[f])}
                 className="px-5 py-2 text-sm font-medium rounded-md transition-fast hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed bg-accent text-bg-0"
               >
                 Continue →

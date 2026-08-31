@@ -19,6 +19,7 @@ import { syncMetrics } from "./lib/metrics";
 import {
   activeChannels,
   buildScheduleForChannel,
+  checkDailyBuildRan,
   dispatchPost,
   recordJobRun,
   reconcilePosts,
@@ -184,6 +185,7 @@ export default {
     ctx.waitUntil(
       (async () => {
         try {
+          const deadMan = await checkDailyBuildRan(env);
           const requeued = await requeueStuckPosts(env);
           const reconciled = await reconcilePosts(env);
           // Metrik disinkronkan lebih jarang daripada rekonsiliasi: penyedia
@@ -199,7 +201,7 @@ export default {
             env,
             "reconcile",
             "success",
-            { requeued, ...reconciled, metrics },
+            { requeued, ...reconciled, metrics, deadMan },
             startedAt,
           );
         } catch (err) {
@@ -225,12 +227,21 @@ export default {
   async queue(batch: MessageBatch<DispatchMessage>, env: Env): Promise<void> {
     for (const message of batch.messages) {
       try {
-        await dispatchPost(env, message.body.postId);
-        message.ack();
+        const outcome = await dispatchPost(env, message.body.postId);
+
+        // Kegagalan yang TIDAK pantas diulang di-ack, bukan di-retry (PRD F6).
+        // Kunci dicabut atau metadata ditolak tidak akan sembuh dengan tiga
+        // percobaan tambahan — itu hanya menunda alert yang justru dibutuhkan,
+        // dan barisnya sudah ditandai `failed` berikut sebabnya.
+        if (outcome.ok || !outcome.retryable) {
+          message.ack();
+        } else {
+          message.retry();
+        }
       } catch (err) {
         console.error(`dispatch ${message.body.postId} gagal:`, err);
-        // retry() mengembalikannya ke antrean; setelah max_retries habis ia
-        // masuk DLQ, bukan hilang diam-diam.
+        // Lemparan tak terduga selalu layak diulang: penyebabnya belum
+        // terklasifikasi, jadi asumsi paling aman adalah sementara.
         message.retry();
       }
     }

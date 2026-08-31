@@ -8,15 +8,31 @@
  * setengah jalan — persis kondisi yang melahirkan duplikat di sistem referensi.
  */
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
-import { and, eq, inArray, lte, ne, or, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, ne, or, isNull, sql } from "drizzle-orm";
 import { channels, jobRuns, scheduledPosts, settings, videoAssets, videoMetadata } from "../db/schema";
 import { activeSlotCount, generateSlots, todayInTimezone } from "./slots";
 import { decryptSecret } from "./crypto";
-import { createPost, getPost, readPostStatus, unwrapPost, uploadMedia } from "./zernio";
+import {
+  classifyFailure,
+  createPost,
+  getPost,
+  isRetryable,
+  readPostStatus,
+  unwrapPost,
+  uploadMedia,
+  type FailureKind,
+} from "./zernio";
 import type { Env } from "../index";
 
 export interface DispatchMessage {
   postId: string;
+}
+
+/** Hasil satu dispatch. Field `retryable` yang menentukan ack() atau retry(). */
+export interface DispatchOutcome {
+  ok: boolean;
+  kind?: FailureKind;
+  retryable: boolean;
 }
 
 function nowIso(): string {
@@ -163,7 +179,7 @@ export async function buildScheduleForChannel(
  * vonis adalah yang membuat sistem referensi diam 13 hari dengan centang hijau
  * di dashboard.
  */
-export async function dispatchPost(env: Env, postId: string): Promise<void> {
+export async function dispatchPost(env: Env, postId: string): Promise<DispatchOutcome> {
   const db = drizzle(env.DB);
 
   // Klaim post-nya. Kalau bukan 'queued' lagi, ada yang sudah menanganinya.
@@ -172,18 +188,34 @@ export async function dispatchPost(env: Env, postId: string): Promise<void> {
     .set({ status: "dispatching", updatedAt: nowIso() })
     .where(and(eq(scheduledPosts.id, postId), eq(scheduledPosts.status, "queued")))
     .returning();
-  if (claimed.length === 0) return;
+  // Sudah ditangani proses lain — bukan kegagalan, dan jangan diulang.
+  if (claimed.length === 0) return { ok: true, retryable: false };
 
   const post = claimed[0]!;
-  const fail = async (reason: string) => {
+
+  /**
+   * Mencatat kegagalan BESERTA klasifikasinya (PRD F6), dan memberi tahu
+   * pemanggil apakah pantas diulang.
+   *
+   * Kegagalan channel (kunci dicabut, kuota habis) tidak boleh diulang: tiga
+   * percobaan tambahan tidak akan menolong, hanya menunda alert yang justru
+   * dibutuhkan operator.
+   */
+  const fail = async (reason: string): Promise<DispatchOutcome> => {
+    const kind = classifyFailure(reason);
     await db
       .update(scheduledPosts)
-      .set({ status: "failed", failReason: reason.slice(0, 500), updatedAt: nowIso() })
+      .set({
+        status: "failed",
+        failReason: `[${kind}] ${reason}`.slice(0, 500),
+        updatedAt: nowIso(),
+      })
       .where(eq(scheduledPosts.id, postId));
     await db
       .update(videoAssets)
       .set({ status: "failed", updatedAt: nowIso() })
       .where(eq(videoAssets.id, post.videoId));
+    return { ok: false, kind, retryable: isRetryable(kind) };
   };
 
   const [channel] = await db.select().from(channels).where(eq(channels.id, post.channelId)).limit(1);
@@ -216,7 +248,7 @@ export async function dispatchPost(env: Env, postId: string): Promise<void> {
         updatedAt: nowIso(),
       })
       .where(eq(scheduledPosts.id, postId));
-    return;
+    return { ok: true, retryable: false };
   }
 
   if (!channel.zernioApiKeyEnc) return fail("Channel belum punya API key Zernio.");
@@ -275,6 +307,8 @@ export async function dispatchPost(env: Env, postId: string): Promise<void> {
       updatedAt: nowIso(),
     })
     .where(eq(scheduledPosts.id, postId));
+
+  return { ok: true, retryable: false };
 }
 
 /**
@@ -350,6 +384,56 @@ export async function requeueStuckPosts(env: Env): Promise<number> {
     await env.DISPATCH.sendBatch(stuck.map((p) => ({ body: { postId: p.id } })));
   }
   return stuck.length;
+}
+
+/**
+ * Dead-man's-switch (PRD F10): mendeteksi cron harian yang TIDAK berjalan.
+ *
+ * Kegagalan paling berbahaya di sistem terjadwal bukan job yang error — itu
+ * tercatat dan terlihat. Yang berbahaya adalah job yang tidak pernah jalan
+ * sama sekali: tidak ada error, tidak ada log, tidak ada baris. Dari dashboard
+ * ia tampak persis seperti "hari ini kebetulan tidak ada yang dijadwalkan".
+ *
+ * Diperiksa oleh cron 10-menitan. Ambangnya beberapa jam setelah build
+ * seharusnya berjalan, supaya keterlambatan wajar tidak memicu alarm palsu.
+ */
+export async function checkDailyBuildRan(env: Env): Promise<{ ran: boolean; alerted: boolean }> {
+  const db = drizzle(env.DB);
+
+  // Build dijadwalkan 18:00 UTC. Beri kelonggaran 6 jam sebelum menyimpulkan
+  // ia benar-benar terlewat.
+  const now = new Date();
+  const since = new Date(now.getTime() - 6 * 3600_000);
+  if (now.getUTCHours() < 18 && since.getUTCHours() < 18) {
+    // Belum melewati jendela hari ini — belum ada yang bisa disimpulkan.
+    return { ran: true, alerted: false };
+  }
+
+  const cutoff = new Date(now.getTime() - 30 * 3600_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const recent = await db
+    .select({ id: jobRuns.id })
+    .from(jobRuns)
+    .where(and(eq(jobRuns.jobType, "build-schedule"), gte(jobRuns.startedAt, cutoff)))
+    .limit(1);
+
+  if (recent.length > 0) return { ran: true, alerted: false };
+
+  // Tidak ada build dalam 30 jam terakhir. Dicatat sebagai job_run gagal
+  // supaya MUNCUL di Activity & Logs — ketiadaan tidak bisa dilihat, tapi
+  // catatan tentang ketiadaan bisa.
+  await db.insert(jobRuns).values({
+    id: newId("job"),
+    jobType: "dead-mans-switch",
+    status: "failed",
+    startedAt: nowIso(),
+    finishedAt: nowIso(),
+    detailJson: JSON.stringify({
+      alert: "Cron build-schedule tidak berjalan dalam 30 jam terakhir.",
+      periksa: "Cron trigger di dashboard Cloudflare, dan apakah Worker ter-deploy.",
+    }),
+  });
+
+  return { ran: false, alerted: true };
 }
 
 /** Mencatat satu jalannya job untuk audit (§11 observability). */

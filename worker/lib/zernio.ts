@@ -210,6 +210,47 @@ export async function deletePost(apiKey: string, postId: string) {
   return call<Record<string, unknown>>(apiKey, "DELETE", `/posts/${postId}`);
 }
 
+/**
+ * Klasifikasi kegagalan (PRD F6).
+ *
+ * Bedanya penting karena menentukan tindakan, bukan sekadar label:
+ *  - `channel`  : kredensial/izin/kuota. Mengulang TIDAK akan menolong dan
+ *                 hanya membakar kuota; operator harus turun tangan.
+ *  - `transient`: jaringan, 5xx, rate limit. Justru harus diulang.
+ *  - `content`  : metadata ditolak platform. Ulangan identik pasti gagal lagi.
+ *
+ * Sebelum ini semua kegagalan diperlakukan sama: di-retry sampai habis lalu
+ * masuk DLQ. Untuk kunci yang dicabut, itu tiga percobaan sia-sia dan alert
+ * yang datang terlambat.
+ */
+export type FailureKind = "channel" | "transient" | "content" | "unknown";
+
+export function classifyFailure(message: string): FailureKind {
+  const m = message.toLowerCase();
+
+  // Kredensial/izin — hanya manusia yang bisa memperbaikinya.
+  if (/\b(401|403)\b|unauthorized|forbidden|invalid.*(token|key|credential)|disconnected|not connected|revoked|expired.*token/.test(m)) {
+    return "channel";
+  }
+  // Kuota juga butuh manusia (atau waktu), tapi bukan kesalahan konten.
+  if (/quota|limit reached|exceeded/.test(m)) return "channel";
+
+  // Layak diulang.
+  if (/\b(429|500|502|503|504)\b|timeout|timed out|network|econn|temporar|rate.?limit|unavailable/.test(m)) {
+    return "transient";
+  }
+
+  // Metadata ditolak — mengulang payload yang sama akan gagal lagi.
+  if (/\b400\b|invalid|title|description|tag|category|too long|required/.test(m)) return "content";
+
+  return "unknown";
+}
+
+/** Apakah kegagalan ini pantas dicoba ulang otomatis? */
+export function isRetryable(kind: FailureKind): boolean {
+  return kind === "transient" || kind === "unknown";
+}
+
 /** Post yang dibuat dibungkus `post`/`data`; yang dibaca kembali kadang tidak. */
 export function unwrapPost(json: unknown): Record<string, unknown> | undefined {
   if (!json || typeof json !== "object") return undefined;

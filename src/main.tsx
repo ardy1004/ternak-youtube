@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import AuthGate from './auth/AuthGate'
+import ErrorBoundary from './components/ErrorBoundary'
 import { AppProvider } from './store/AppStore'
 import { ApiError } from './lib/api'
 import './index.css'
@@ -24,14 +25,18 @@ const queryClient = new QueryClient({
 // AuthGate membungkus AppProvider, bukan sebaliknya: store tidak boleh mulai
 // mengambil data sebelum ada sesi, kalau tidak setiap boot menembakkan
 // serangkaian permintaan yang pasti 401.
+// ErrorBoundary paling luar: error render di mana pun di bawahnya menghasilkan
+// pesan yang bisa dibaca, bukan halaman kosong.
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <AuthGate>
-        <AppProvider>
-          <App />
-        </AppProvider>
-      </AuthGate>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <AuthGate>
+          <AppProvider>
+            <App />
+          </AppProvider>
+        </AuthGate>
+      </QueryClientProvider>
+    </ErrorBoundary>
   </React.StrictMode>,
 )

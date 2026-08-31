@@ -60,7 +60,12 @@ function SidebarItem({
 }
 
 export default function App() {
-  const { dryRun, setDryRun, addVideo, today } = useApp();
+  const { dryRun, setDryRun, addVideo, today, channels } = useApp();
+  // Channel dianggap SIAP hanya bila aktif dan kredensialnya lengkap — itu
+  // syarat minimum agar dispatch bisa berhasil.
+  const readyChannels = channels.filter(
+    (c) => c.status === "active" && (c as { hasZernioKey?: boolean }).hasZernioKey && (c as { zernioAccountId?: string }).zernioAccountId,
+  ).length;
   const { user, logout } = useAuth();
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [showUpload, setShowUpload] = useState(false);
@@ -153,13 +158,24 @@ export default function App() {
 
           {/* Connection status */}
           <div className="px-3 py-2">
-            <div className="flex items-center gap-1.5 text-xs text-success">
-              <span className="status-dot active" />
-              <span>YouTube · Connected</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs mt-1 text-success">
-              <span className="status-dot active" />
-              <span>Zernio · Connected</span>
+            {/*
+              Dulu dua baris ini selalu berbunyi "Connected" tanpa memeriksa
+              apa pun. Sekarang dihitung dari channel yang benar-benar ada:
+              sebuah channel "siap" hanya bila aktif DAN punya kunci Zernio
+              serta accountId. Indikator status yang tidak pernah salah
+              adalah indikator yang tidak berguna.
+            */}
+            <div
+              className={`flex items-center gap-1.5 text-xs ${
+                readyChannels > 0 ? "text-success" : "text-text-muted"
+              }`}
+            >
+              <span className={`status-dot ${readyChannels > 0 ? "active" : "draft"}`} />
+              <span>
+                {channels.length === 0
+                  ? "Belum ada channel"
+                  : `${readyChannels}/${channels.length} channel siap`}
+              </span>
             </div>
           </div>
 
