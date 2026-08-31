@@ -18,7 +18,6 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.102.8",
-    "aws4fetch": "^1.0.20",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.5",
     "react": "^19.0.0",

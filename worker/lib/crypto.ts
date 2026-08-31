@@ -6,8 +6,19 @@
  * login tanpa menyentuh batas CPU.
  */
 
-/** OWASP (2023) menyarankan >=600k untuk PBKDF2-HMAC-SHA256. */
-const PBKDF2_ITERATIONS = 600_000;
+/**
+ * BATAS PLATFORM, bukan pilihan: Cloudflare Workers menolak iterasi di atas
+ * 100.000 dengan `NotSupportedError: Pbkdf2 failed: iteration counts above
+ * 100000 are not supported`. Jangan dinaikkan — OWASP memang menyarankan
+ * >=600k, tapi angka itu ditolak runtime.
+ *
+ * Yang bikin ini mahal untuk ditemukan: `wrangler dev` lokal TIDAK menegakkan
+ * batasnya, jadi 600k berjalan mulus di dev dan baru gagal di produksi.
+ *
+ * Nilai ini HARUS sama persis dengan worker/db/create-user.mjs. Kalau berbeda,
+ * hash yang dibuat skrip itu tidak akan pernah cocok saat login.
+ */
+const PBKDF2_ITERATIONS = 100_000;
 const KEY_BITS = 256;
 const SALT_BYTES = 16;
 
@@ -57,19 +68,35 @@ export async function hashPassword(password: string): Promise<{ hash: string; sa
   return { hash: toBase64(derived), salt: toBase64(salt) };
 }
 
+/**
+ * Mengembalikan false HANYA bila passwordnya memang tidak cocok.
+ *
+ * Versi sebelumnya membungkus seluruh badan fungsi dalam try/catch dan
+ * mengembalikan false pada error apa pun. Itu tampak defensif, tapi berakibat
+ * setiap kegagalan runtime — kunci rusak, batas platform, bug — menyamar
+ * sebagai "password salah". Gejalanya persis kegagalan autentikasi biasa,
+ * sehingga penyebab sesungguhnya tidak pernah terlihat.
+ *
+ * Sekarang hanya data rusak di database yang ditangani; kegagalan kripto
+ * dilempar supaya terlihat di log dan menghasilkan 500, bukan 401 palsu.
+ */
 export async function verifyPassword(
   password: string,
   hash: string,
   salt: string,
 ): Promise<boolean> {
+  let saltBytes: Uint8Array;
+  let hashBytes: Uint8Array;
   try {
-    const derived = await derive(password, fromBase64(salt));
-    return constantTimeEqual(derived, fromBase64(hash));
+    saltBytes = fromBase64(salt);
+    hashBytes = fromBase64(hash);
   } catch {
-    // Salt/hash rusak di database tidak boleh melempar ke jalur login —
-    // perlakukan sebagai gagal autentikasi.
+    // Baris database rusak — bukan error runtime, dan bukan salah operator.
     return false;
   }
+
+  const derived = await derive(password, saltBytes);
+  return constantTimeEqual(derived, hashBytes);
 }
 
 async function hmacKey(secret: string): Promise<CryptoKey> {

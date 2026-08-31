@@ -39,11 +39,9 @@ export interface Env {
   ENCRYPTION_KEY?: string;
   GEMINI_API_KEY?: string;
 
-  // Kredensial S3 R2 — hanya untuk MENANDATANGANI URL upload. Binding VIDEOS
-  // di atas yang dipakai untuk membaca objek dari dalam Worker.
-  CLOUDFLARE_ACCOUNT_ID?: string;
-  R2_ACCESS_KEY_ID?: string;
-  R2_SECRET_ACCESS_KEY?: string;
+  // Kredensial S3 R2 sengaja TIDAK ada di sini. Upload memakai binding VIDEOS
+  // (multipart, lihat routes/videos.ts), jadi Worker tidak pernah perlu
+  // menandatangani apa pun — dan secret yang tidak ada tidak bisa bocor.
 }
 
 const api = new Hono<{ Bindings: Env; Variables: { session: SessionData } }>().basePath("/api");

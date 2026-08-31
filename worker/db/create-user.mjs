@@ -18,8 +18,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Harus identik dengan worker/lib/crypto.ts.
-const PBKDF2_ITERATIONS = 600_000;
+// Harus identik dengan worker/lib/crypto.ts — termasuk batas 100.000 yang
+// dipaksakan runtime Workers (lihat komentar di sana).
+const PBKDF2_ITERATIONS = 100_000;
 const KEY_BITS = 256;
 const SALT_BYTES = 16;
 

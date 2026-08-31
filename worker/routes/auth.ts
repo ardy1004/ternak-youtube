@@ -42,9 +42,22 @@ auth.post("/login", async (c) => {
 
   // Tetap jalankan verifikasi walau user tidak ada, dengan hash boneka, supaya
   // waktu responsnya tidak membocorkan keberadaan username.
-  const ok = user
-    ? await verifyPassword(password, user.passwordHash, user.passwordSalt)
-    : await verifyPassword(password, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "AAAAAAAAAAAAAAAAAAAAAA==");
+  let ok: boolean;
+  try {
+    ok = user
+      ? await verifyPassword(password, user.passwordHash, user.passwordSalt)
+      : await verifyPassword(
+          password,
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "AAAAAAAAAAAAAAAAAAAAAA==",
+        );
+  } catch (err) {
+    // Kegagalan kripto BUKAN kredensial salah. Dilaporkan sebagai 500 dan
+    // dicatat, supaya tidak menyamar sebagai password keliru dan menyesatkan
+    // penelusuran selama berjam-jam.
+    console.error("verifyPassword gagal:", err);
+    return c.json({ error: "Verifikasi password gagal di server." }, 500);
+  }
 
   if (!user || !ok) return c.json(GENERIC_FAILURE, 401);
 
