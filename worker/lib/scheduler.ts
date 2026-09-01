@@ -10,7 +10,7 @@
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
 import { and, eq, gte, inArray, lte, ne, or, isNull, sql } from "drizzle-orm";
 import { channels, jobRuns, scheduledPosts, settings, videoAssets, videoMetadata } from "../db/schema";
-import { activeSlotCount, generateSlots, todayInTimezone } from "./slots";
+import { activeSlotCount, generateSlotsFromBaseTimes, todayInTimezone } from "./slots";
 import { decryptSecret } from "./crypto";
 import {
   classifyFailure,
@@ -90,14 +90,20 @@ export async function buildScheduleForChannel(
   if (claimed.length === 0) return { status: "already_built" };
 
   const slotsAllowed = activeSlotCount(channel);
-  const slotTimes = generateSlots(todayISO, {
-    count: slotsAllowed,
-    windowStart: channel.windowStart,
-    windowEnd: channel.windowEnd,
-    intervalMin: channel.intervalMin,
+  /**
+   * Jadwal datang dari JAM DASAR + pergeseran harian (lihat schema.baseTimes),
+   * bukan dari jendela + jitter acak. Ini yang diminta operator dan yang
+   * disepakati sebagai kuota: 5 upload/hari, seluruh jam bergeser 5 menit tiap
+   * hari, reset saat jam terakhir menyentuh 00:00.
+   */
+  const slotTimes = generateSlotsFromBaseTimes(todayISO, {
+    baseTimes: channel.baseTimes.split(",").map((s) => s.trim()).filter(Boolean),
+    driftMinutesPerDay: channel.driftMinutesPerDay,
+    // Tanpa anchor tersimpan, pakai hari ini — pola dimulai dari jam dasar.
+    anchorDate: channel.driftAnchorDate ?? todayISO,
     timezone: channel.timezone,
     activeDays: channel.activeDays ? channel.activeDays.split(",").filter(Boolean) : [],
-    seed: `${channel.id}:${todayISO}`,
+    count: slotsAllowed,
   });
 
   if (slotTimes.length === 0) return { status: "built", built: 0, slotsAllowed, skipped: 0 };
@@ -271,13 +277,28 @@ export async function dispatchPost(env: Env, postId: string): Promise<DispatchOu
   });
   if (!uploaded.ok) return fail(uploaded.error);
 
+  /**
+   * Caption dan hashtag digabung jadi SATU badan teks — keputusan operator.
+   *
+   * Zernio tidak punya field `tags` terpisah untuk YouTube, jadi ini bukan
+   * kompromi sementara melainkan bentuk finalnya. Ditulis eksplisit supaya
+   * tidak ada yang mengira tag hilang karena bug.
+   *
+   * Tag dinormalkan jadi hashtag yang sah: spasi dan karakter non-alfanumerik
+   * dibuang (YouTube memutus hashtag pada karakter pertama yang tidak sah,
+   * jadi "#konten kecantikan" hanya terbaca sebagai "#konten"), dan duplikat
+   * dibuang supaya tag dasar channel tidak muncul dua kali.
+   */
   const tags = meta.tagsJson ? (JSON.parse(meta.tagsJson) as string[]) : [];
-  // Zernio tidak punya field `tags` terpisah untuk YouTube (§12), jadi tag
-  // hanya bisa masuk lewat deskripsi. Ditulis eksplisit supaya tidak ada yang
-  // mengira tag hilang karena bug.
-  const description = [meta.description ?? "", tags.length ? tags.map((t) => `#${t.replace(/\s+/g, "")}`).join(" ") : ""]
-    .filter(Boolean)
-    .join("\n\n");
+  const hashtags = [
+    ...new Set(
+      tags
+        .map((t) => t.replace(/[^\p{L}\p{N}]/gu, ""))
+        .filter(Boolean)
+        .map((t) => `#${t}`),
+    ),
+  ];
+  const description = [meta.description ?? "", hashtags.join(" ")].filter(Boolean).join("\n\n");
 
   // Zernio menuntut ISO tanpa sufiks zona, plus timezone terpisah. Kirim jam
   // dinding UTC dengan timezone "UTC" agar kedua bagian selalu konsisten.

@@ -52,6 +52,9 @@ interface ChannelDTO {
   /** Kunci Zernio TIDAK pernah dikirim — hanya apakah sudah diisi. */
   hasZernioKey: boolean;
   zernioAccountId: string;
+  /** Jam dasar harian dan pergeserannya — sumber jadwal sebenarnya. */
+  baseTimes: string[];
+  driftMinutesPerDay: number;
 }
 
 function toDTO(row: ChannelRow): ChannelDTO {
@@ -88,6 +91,8 @@ function toDTO(row: ChannelRow): ChannelDTO {
     weeklyViews: 0,
     hasZernioKey: Boolean(row.zernioApiKeyEnc),
     zernioAccountId: row.zernioAccountId ?? "",
+    baseTimes: row.baseTimes ? row.baseTimes.split(",").map((s) => s.trim()).filter(Boolean) : [],
+    driftMinutesPerDay: row.driftMinutesPerDay,
   };
 }
 
@@ -130,6 +135,8 @@ function toRow(input: ChannelInput): Partial<typeof channels.$inferInsert> {
   set("warmupDays", input.warmupDays);
   set("warmupStartPerDay", input.warmupStartPerDay);
   set("zernioAccountId", input.zernioAccountId);
+  set("baseTimes", input.baseTimes ? input.baseTimes.join(",") : undefined);
+  set("driftMinutesPerDay", input.driftMinutesPerDay);
   return row;
 }
 
@@ -181,6 +188,9 @@ channelRoutes.post("/", async (c) => {
     r2Prefix: `ternak-yt/${id}/`,
     // Warm-up dihitung dari saat channel ini dibuat, bukan tanggal global.
     warmupStartedAt: nowIso(),
+    // Siklus pergeseran juga dimulai hari ini, jadi channel baru selalu
+    // memulai dari jam dasarnya sendiri.
+    driftAnchorDate: nowIso().slice(0, 10),
     createdAt: nowIso(),
     updatedAt: nowIso(),
   };

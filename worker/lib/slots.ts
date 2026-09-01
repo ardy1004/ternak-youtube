@@ -70,6 +70,89 @@ export function isoDayOfWeek(dateISO: string, timeZone: string): number {
   return map[name] ?? 1;
 }
 
+export interface BaseTimeConfig {
+  /** Jam dasar "HH:mm", mis. ["06:00","12:00","17:00","19:00","21:00"]. */
+  baseTimes: string[];
+  /** Pergeseran per hari, dalam menit. */
+  driftMinutesPerDay: number;
+  /** Tanggal "YYYY-MM-DD" saat siklus pergeseran dimulai. */
+  anchorDate: string;
+  timezone: string;
+  activeDays: string[];
+  /** Batas jumlah slot hari ini (warm-up bisa menurunkannya). */
+  count: number;
+}
+
+/**
+ * Berapa hari sebelum pola kembali ke jam dasar.
+ *
+ * Reset dipicu saat jam dasar TERAKHIR menyentuh 00:00. Dengan dasar terakhir
+ * 21:00 dan geser 5 menit/hari: (1440-1260)/5 = 36 hari.
+ *
+ * Dihitung dari jam terakhir, bukan yang pertama — kalau dihitung dari yang
+ * pertama, jam-jam belakang sudah melewati tengah malam dan tumpah ke hari
+ * berikutnya sebelum siklusnya sempat reset.
+ */
+export function driftCycleDays(baseTimes: string[], driftMinutesPerDay: number): number {
+  if (baseTimes.length === 0 || driftMinutesPerDay <= 0) return 1;
+  const latest = Math.max(...baseTimes.map(toMinutes));
+  const room = 1440 - latest;
+  return Math.max(1, Math.ceil(room / driftMinutesPerDay));
+}
+
+/** Selisih hari kalender antara dua tanggal "YYYY-MM-DD". */
+function daysBetween(fromISO: string, toISO: string): number {
+  const [fy, fm, fd] = fromISO.split("-").map(Number);
+  const [ty, tm, td] = toISO.split("-").map(Number);
+  const from = Date.UTC(fy ?? 1970, (fm ?? 1) - 1, fd ?? 1);
+  const to = Date.UTC(ty ?? 1970, (tm ?? 1) - 1, td ?? 1);
+  return Math.floor((to - from) / 86_400_000);
+}
+
+/**
+ * Slot dari JAM DASAR + pergeseran harian tetap.
+ *
+ * Pola yang diminta operator: lima jam dasar per hari, seluruhnya bergeser
+ * serempak +N menit setiap hari, dan kembali ke jam dasar begitu jam terakhir
+ * menyentuh 00:00.
+ *
+ *   hari 0 : 06:00 12:00 17:00 19:00 21:00
+ *   hari 1 : 06:05 12:05 17:05 19:05 21:05
+ *   hari 35: 08:55 14:55 19:55 21:55 23:55
+ *   hari 36: kembali ke jam dasar
+ *
+ * Dikunci ke TANGGAL lewat anchorDate, bukan penghitung yang bertambah tiap
+ * build. Build yang terlewat karena itu tidak menggeser pola — hari ke-10
+ * tetap hari ke-10 walau cron hari ke-9 tidak pernah jalan.
+ */
+export function generateSlotsFromBaseTimes(dateISO: string, config: BaseTimeConfig): string[] {
+  if (config.count <= 0 || config.baseTimes.length === 0) return [];
+
+  if (config.activeDays.length > 0) {
+    const dow = String(isoDayOfWeek(dateISO, config.timezone));
+    if (!config.activeDays.includes(dow)) return [];
+  }
+
+  const cycle = driftCycleDays(config.baseTimes, config.driftMinutesPerDay);
+  // Modulo yang aman untuk tanggal SEBELUM anchor (selisih negatif).
+  const elapsed = daysBetween(config.anchorDate, dateISO);
+  const dayInCycle = ((elapsed % cycle) + cycle) % cycle;
+  const offset = dayInCycle * config.driftMinutesPerDay;
+
+  // Urut menaik supaya slot ke-n selalu jam ke-n dalam sehari; warm-up
+  // memotong dari depan, jadi channel baru memposting di jam paling pagi.
+  const ordered = [...config.baseTimes].sort((a, b) => toMinutes(a) - toMinutes(b));
+
+  return ordered.slice(0, config.count).map((t) => {
+    const minute = toMinutes(t) + offset;
+    const hh = String(Math.floor(minute / 60) % 24).padStart(2, "0");
+    const mm = String(minute % 60).padStart(2, "0");
+    return localTimeToUtc(dateISO, `${hh}:${mm}`, config.timezone)
+      .toISOString()
+      .replace(/\.\d{3}Z$/, "Z");
+  });
+}
+
 export interface SlotConfig {
   count: number;
   windowStart: string;

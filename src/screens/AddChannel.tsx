@@ -34,6 +34,9 @@ interface FormState {
    */
   zernioApiKey: string;
   zernioAccountId: string;
+  /** Jam dasar harian "HH:mm". Semua bergeser serempak tiap hari. */
+  baseTimes: string[];
+  driftMinutesPerDay: number;
   market: string;
   contentLang: string;
   niche: string;
@@ -270,6 +273,111 @@ function CredentialsStep({
   );
 }
 
+/** Menit "HH:mm" → angka, untuk mengurutkan dan menghitung pergeseran. */
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+}
+
+/**
+ * Jam dasar harian + pergeseran (menggantikan jendela/interval).
+ *
+ * Menampilkan pratinjau siklusnya, bukan hanya menerima angka: pola ini
+ * bergeser perlahan selama puluhan hari, dan tanpa pratinjau operator tidak
+ * punya cara melihat kapan ia mencapai tengah malam dan kembali ke awal.
+ */
+function BaseTimesField({
+  baseTimes,
+  drift,
+  timezone,
+  onBaseTimes,
+  onDrift,
+}: {
+  baseTimes: string[];
+  drift: number;
+  timezone: string;
+  onBaseTimes: (v: string[]) => void;
+  onDrift: (v: number) => void;
+}) {
+  const ordered = [...baseTimes].sort((a, b) => toMinutes(a) - toMinutes(b));
+  const latest = ordered.length ? toMinutes(ordered[ordered.length - 1]!) : 0;
+  const cycleDays = drift > 0 ? Math.max(1, Math.ceil((1440 - latest) / drift)) : 1;
+
+  const shift = (day: number) =>
+    ordered
+      .map((t) => {
+        const m = toMinutes(t) + day * drift;
+        return `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+      })
+      .join("  ");
+
+  const setAt = (i: number, value: string) =>
+    onBaseTimes(baseTimes.map((t, n) => (n === i ? value : t)));
+
+  return (
+    <div className="space-y-4">
+      <Field
+        label="Jam dasar harian"
+        hint={`Semua jam bergeser serempak +${drift} menit tiap hari, lalu kembali ke jam dasar setelah ${cycleDays} hari (saat jam terakhir menyentuh 00:00). Waktu dalam ${timezone}.`}
+      >
+        <div className="flex flex-wrap gap-2">
+          {baseTimes.map((t, i) => (
+            <div key={i} className="flex items-center gap-1">
+              <input
+                type="time"
+                value={t}
+                onChange={(e) => setAt(i, e.target.value)}
+                className="px-3 py-2 rounded-md border text-sm outline-none font-mono"
+                style={inputStyle()}
+              />
+              <button
+                onClick={() => onBaseTimes(baseTimes.filter((_, n) => n !== i))}
+                aria-label={`Hapus jam ${t}`}
+                className="px-2 py-2 text-xs text-text-muted hover:text-danger-text transition-fast"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={() => onBaseTimes([...baseTimes, "12:00"])}
+            className="px-3 py-2 text-sm rounded-md border border-border text-text-secondary transition-fast hover:bg-overlay"
+          >
+            + Tambah jam
+          </button>
+        </div>
+      </Field>
+
+      <Field label="Pergeseran per hari (menit)">
+        <input
+          type="number"
+          min={0}
+          max={60}
+          value={drift}
+          onChange={(e) => onDrift(Number(e.target.value))}
+          className="w-32 px-3 py-2 rounded-md border text-sm outline-none"
+          style={inputStyle()}
+        />
+      </Field>
+
+      {ordered.length > 0 && (
+        <div className="rounded-md border border-border bg-surface-2 p-3">
+          <div className="label-caps mb-2">Pratinjau siklus</div>
+          <div className="space-y-1 font-mono text-xs text-text-secondary">
+            <div>hari 1 · {shift(0)}</div>
+            <div>hari 2 · {shift(1)}</div>
+            <div className="text-text-muted">…</div>
+            <div>
+              hari {cycleDays} · {shift(cycleDays - 1)}
+            </div>
+            <div className="text-accent">hari {cycleDays + 1} · {shift(0)} (kembali ke awal)</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Toggle({
   on,
   onChange,
@@ -324,6 +432,8 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
           // Selalu kosong saat mengedit: server tidak pernah mengirim kunci balik.
           zernioApiKey: "",
           zernioAccountId: (editing as { zernioAccountId?: string }).zernioAccountId ?? "",
+          baseTimes: (editing as { baseTimes?: string[] }).baseTimes ?? ["06:00","12:00","17:00","19:00","21:00"],
+          driftMinutesPerDay: (editing as { driftMinutesPerDay?: number }).driftMinutesPerDay ?? 5,
           market: editing.market,
           contentLang: editing.contentLang,
           niche: editing.niche,
@@ -354,13 +464,15 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
           isActive: true,
           zernioApiKey: "",
           zernioAccountId: "",
+          baseTimes: ["06:00","12:00","17:00","19:00","21:00"],
+          driftMinutesPerDay: 5,
           market: "Indonesia",
           contentLang: "id",
           niche: "Technology",
           contentType: "Tutorial",
           timezone: "Asia/Jakarta",
-          videosPerDay: 2,
-          maxUploadsPerDay: 3,
+          videosPerDay: 5,
+          maxUploadsPerDay: 5,
           windowStart: "07:00",
           windowEnd: "20:00",
           intervalMin: 60,
@@ -490,6 +602,8 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
       warmupDays: form.warmupDays,
       warmupStartPerDay: form.warmupStartPerDay,
       zernioAccountId: form.zernioAccountId,
+      baseTimes: form.baseTimes,
+      driftMinutesPerDay: form.driftMinutesPerDay,
       // Hanya dikirim bila benar-benar diisi. Kunci kosong berarti "pertahankan
       // yang tersimpan", bukan "hapus" — server memperlakukannya begitu.
       ...(form.zernioApiKey.trim() ? { zernioApiKey: form.zernioApiKey.trim() } : {}),
@@ -735,39 +849,18 @@ export default function AddChannel({ onSave, onCancel, editingChannelId }: AddCh
                 </Field>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
-                <Field label="Window Start">
-                  <input
-                    type="time"
-                    value={form.windowStart}
-                    onChange={(e) => set("windowStart", e.target.value)}
-                    className="w-full px-3 py-2 rounded-md border text-sm outline-none"
-                    style={inputStyle()}
-                  />
-                </Field>
-                <Field label="Window End" error={showError("windowEnd")}>
-                  <input
-                    type="time"
-                    value={form.windowEnd}
-                    onChange={(e) => set("windowEnd", e.target.value)}
-                    onBlur={() => markTouched("windowEnd")}
-                    className="w-full px-3 py-2 rounded-md border text-sm outline-none"
-                    style={inputStyle(showError("windowEnd"))}
-                  />
-                </Field>
-                <Field label="Interval (min)" error={showError("intervalMin")}>
-                  <input
-                    type="number"
-                    min={15}
-                    step={15}
-                    value={form.intervalMin}
-                    onChange={(e) => set("intervalMin", Number(e.target.value))}
-                    onBlur={() => markTouched("intervalMin")}
-                    className="w-full px-3 py-2 rounded-md border text-sm outline-none"
-                    style={inputStyle(showError("intervalMin"))}
-                  />
-                </Field>
-              </div>
+              {/*
+                Jendela + interval DIGANTI jam dasar + pergeseran harian.
+                Menampilkan kontrol yang tidak lagi menggerakkan penjadwalan
+                akan mengulang persis kesalahan chip "Zernio · Connected".
+              */}
+              <BaseTimesField
+                baseTimes={form.baseTimes}
+                drift={form.driftMinutesPerDay}
+                timezone={form.timezone}
+                onBaseTimes={(v) => set("baseTimes", v)}
+                onDrift={(v) => set("driftMinutesPerDay", v)}
+              />
 
               <Field label="Active Days" error={showError("activeDays")}>
                 <div className="flex gap-1.5 mt-1">

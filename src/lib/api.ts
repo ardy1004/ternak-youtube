@@ -110,6 +110,8 @@ export interface ChannelDTO {
   weeklyViews: number;
   hasZernioKey: boolean;
   zernioAccountId: string;
+  baseTimes: string[];
+  driftMinutesPerDay: number;
 }
 
 export interface TestConnectionResult {

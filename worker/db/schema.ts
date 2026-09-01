@@ -47,12 +47,28 @@ export const channels = sqliteTable(
 
     // Penjadwalan
     timezone: text("timezone").notNull().default("Asia/Jakarta"),
-    videosPerDay: integer("videos_per_day").notNull().default(1),
-    windowStart: text("window_start").notNull().default("08:00"),
-    windowEnd: text("window_end").notNull().default("21:00"),
-    intervalMin: integer("interval_min").notNull().default(180),
+    videosPerDay: integer("videos_per_day").notNull().default(5),
+
+    /**
+     * Jam dasar harian, CSV "HH:mm" — mis. "06:00,12:00,17:00,19:00,21:00".
+     *
+     * Inilah sumber jadwal sebenarnya. Seluruh jam bergeser serempak
+     * `driftMinutesPerDay` setiap hari, lalu kembali ke jam dasar begitu jam
+     * terakhir menyentuh 00:00 (lihat generateSlotsFromBaseTimes).
+     */
+    baseTimes: text("base_times").notNull().default("06:00,12:00,17:00,19:00,21:00"),
+    driftMinutesPerDay: integer("drift_minutes_per_day").notNull().default(5),
+    /** "YYYY-MM-DD" awal siklus pergeseran. Dikunci ke tanggal, bukan penghitung. */
+    driftAnchorDate: text("drift_anchor_date"),
+
+    // Dipertahankan sebagai PAGAR, bukan generator: jam tayang datang dari
+    // baseTimes. windowStart/End hanya dipakai UI lama dan validasi.
+    windowStart: text("window_start").notNull().default("06:00"),
+    windowEnd: text("window_end").notNull().default("23:59"),
+    intervalMin: integer("interval_min").notNull().default(60),
     activeDays: text("active_days").notNull().default("1,2,3,4,5,6,7"),
-    maxUploadsPerDay: integer("max_uploads_per_day").notNull().default(3),
+    // Kuota harian efektif per channel — dikonfirmasi operator: 5.
+    maxUploadsPerDay: integer("max_uploads_per_day").notNull().default(5),
 
     // Default YouTube
     ytVisibility: text("yt_visibility").notNull().default("public"),
